@@ -17,7 +17,7 @@ Important files
   hides the main window at startup, intercepts close requests (minimize to
   tray), and registers commands exposed to the frontend (`greet`,
   `is_autostart_enabled`, `set_autostart_enabled`, `enable_autostart`).
-- `src/main.rs` — Small binary that calls `timeman_lib::run()`; keep this thin
+- `src/main.rs` — Small binary that calls `usage_meter_lib::run()`; keep this thin
   to reuse the same library entry point in other build targets.
 - `src/tray.rs` — Builds the tray icon and menu using Tauri v2 APIs
   (`TrayIconBuilder`, `MenuBuilder`, `CheckMenuItemBuilder`). Handles

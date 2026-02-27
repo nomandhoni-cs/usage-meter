@@ -1,5 +1,5 @@
 <!--
-  README for timeman: a tray-first Tauri + React template.
+  README for Usage Meter: a tray-first Tauri + React template.
   Keep this file focused, easy to scan, and actionable for new contributors.
 -->
 

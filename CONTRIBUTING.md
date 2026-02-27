@@ -1,4 +1,4 @@
-Thank you for contributing to timeman — your help makes this project better.
+Thank you for contributing to Usage Meter — your help makes this project better.
 
 This document explains how to set up a development environment, how to make
 changes, and what we expect from contributions (PRs). Follow these steps to

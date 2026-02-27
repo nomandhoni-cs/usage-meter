@@ -1,10 +1,10 @@
 mod autostart;
 mod tray;
 
-use tauri::Manager;
 use serde_json::json;
-use sysinfo::{System, SystemExt, NetworksExt, NetworkExt, CpuExt};
-use tauri::{WebviewWindowBuilder, WebviewUrl};
+use sysinfo::{CpuExt, NetworkExt, NetworksExt, System, SystemExt};
+use tauri::Manager;
+use tauri::{WebviewUrl, WebviewWindowBuilder};
 
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 #[tauri::command]
@@ -52,7 +52,9 @@ fn get_system_metrics() -> tauri::Result<serde_json::Value> {
     // divide by elapsed interval used above.
     let rx_bytes: u64 = sys.networks().iter().map(|(_, d)| d.received()).sum();
     let tx_bytes: u64 = sys.networks().iter().map(|(_, d)| d.transmitted()).sum();
-    let elapsed = <sysinfo::System as SystemExt>::MINIMUM_CPU_UPDATE_INTERVAL.as_secs_f64().max(1e-6);
+    let elapsed = <sysinfo::System as SystemExt>::MINIMUM_CPU_UPDATE_INTERVAL
+        .as_secs_f64()
+        .max(1e-6);
     let rx_kbps = (rx_bytes as f64 / elapsed) / 1024.0;
     let tx_kbps = (tx_bytes as f64 / elapsed) / 1024.0;
 
@@ -76,16 +78,15 @@ fn get_system_metrics() -> tauri::Result<serde_json::Value> {
 pub fn run() {
     // build system tray and register event handler at builder level
     tauri::Builder::default()
+        .plugin(tauri_plugin_updater::Builder::new().build())
         // register plugins before running setup so their managed state is
         // available (some plugins expose managed state accessed via
         // `app.autolaunch()` etc.). `init` requires a macOS launcher and an
         // optional args list; pass defaults here.
-        .plugin(
-            tauri_plugin_autostart::init(
-                tauri_plugin_autostart::MacosLauncher::LaunchAgent,
-                None,
-            ),
-        )
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None,
+        ))
         // Register the positioner plugin so we can position windows
         // relative to the tray icon.
         .plugin(tauri_plugin_positioner::init())
@@ -239,7 +240,7 @@ pub fn run() {
                     };
 
                     let _ = WebviewWindowBuilder::new(&app_handle, "overlay", url)
-                        .title("timeman-overlay")
+                        .title("usage-meter-overlay")
                         .inner_size(overlay_w, overlay_h)
                         .position(pos_x, pos_y)
                         .decorations(false)

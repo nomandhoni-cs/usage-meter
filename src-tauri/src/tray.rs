@@ -1,15 +1,15 @@
-use tauri::menu::{MenuBuilder, MenuItemBuilder, CheckMenuItemBuilder};
-use tauri::tray::{TrayIconBuilder, TrayIconEvent, MouseButton, MouseButtonState};
-use std::path::PathBuf;
-use tauri::image::Image as TauriImage;
-use tauri::Manager;
-use tauri::Emitter;
-use tauri_plugin_positioner::{Position, WindowExt};
-use std::sync::{Arc, Mutex};
-use std::time::{Instant, Duration};
-use sysinfo::{System, SystemExt, NetworkExt, NetworksExt, CpuExt};
 use serde_json::json;
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 use std::thread;
+use std::time::{Duration, Instant};
+use sysinfo::{CpuExt, NetworkExt, NetworksExt, System, SystemExt};
+use tauri::image::Image as TauriImage;
+use tauri::menu::{CheckMenuItemBuilder, MenuBuilder, MenuItemBuilder};
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+use tauri::Emitter;
+use tauri::Manager;
+use tauri_plugin_positioner::{Position, WindowExt};
 
 // Build the system tray and register event handlers.
 //
@@ -22,7 +22,9 @@ pub fn build_system_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
     // Menu items (constructed with the v2 MenuBuilder API)
     // Create a checkable menu item so its checked state represents the
     // autostart enabled state.
-    let toggle = CheckMenuItemBuilder::with_id("toggle-autostart", "Toggle Autostart").checked(false).build(app)?;
+    let toggle = CheckMenuItemBuilder::with_id("toggle-autostart", "Toggle Autostart")
+        .checked(false)
+        .build(app)?;
     let quit = MenuItemBuilder::with_id("quit", "Quit").build(app)?;
 
     // A menu item that toggles the main window's visibility. We'll set its
@@ -36,7 +38,9 @@ pub fn build_system_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
         }
     }
 
-    let menu = MenuBuilder::new(app).items(&[&toggle, &show_hide, &quit]).build()?;
+    let menu = MenuBuilder::new(app)
+        .items(&[&toggle, &show_hide, &quit])
+        .build()?;
 
     // Set initial checked state from the autostart plugin if available and
     // also emit an event so the frontend can synchronize on startup.
@@ -66,8 +70,6 @@ pub fn build_system_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
     // We'll build the tray below; no intermediate TrayIconBuilder variable is
     // needed here to avoid type inference issues for the runtime generic.
 
-    
-
     // Build the tray once and capture the returned `TrayIcon` so we can call
     // methods like `set_tooltip` on it later. The `TrayIconBuilder` is
     // consumed by `menu`/`on_tray_icon_event`, so we construct the builder anew
@@ -81,7 +83,11 @@ pub fn build_system_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
                 let show_hide = show_hide.clone();
                 let last_click = last_click.clone();
                 move |tray, event| match event {
-                    TrayIconEvent::Click { button, button_state, .. } => {
+                    TrayIconEvent::Click {
+                        button,
+                        button_state,
+                        ..
+                    } => {
                         // Let the positioner plugin observe tray click events
                         // only — do not forward hover/move events that cause the
                         // overlay to reposition when the user merely moves the
@@ -109,20 +115,23 @@ pub fn build_system_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
                                     if visible {
                                         let _ = window.hide();
                                         let _ = show_hide.set_text("Show");
-                                        let _ = tray.set_tooltip(Some(String::from("timeman — hidden")));
+                                        let _ = tray
+                                            .set_tooltip(Some(String::from("Usage Meter — hidden")));
                                     } else {
                                         let _ = window.show();
                                         let _ = window.unminimize();
                                         let _ = window.set_focus();
                                         let _ = show_hide.set_text("Hide");
-                                        let _ = tray.set_tooltip(Some(String::from("timeman — visible")));
+                                        let _ = tray
+                                            .set_tooltip(Some(String::from("Usage Meter — visible")));
                                     }
                                 } else {
                                     let _ = window.show();
                                     let _ = window.unminimize();
                                     let _ = window.set_focus();
                                     let _ = show_hide.set_text("Hide");
-                                    let _ = tray.set_tooltip(Some(String::from("timeman — visible")));
+                                    let _ =
+                                        tray.set_tooltip(Some(String::from("Usage Meter — visible")));
                                 }
                             }
                         } else if button == MouseButton::Right {
@@ -134,7 +143,9 @@ pub fn build_system_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
                         // the app.
                         let app = tray.app_handle();
                         if let Some(overlay) = app.get_webview_window("overlay") {
-                            let _ = overlay.move_window_constrained(Position::TrayBottomCenter).or_else(|_| overlay.move_window_constrained(Position::TrayCenter));
+                            let _ = overlay
+                                .move_window_constrained(Position::TrayBottomCenter)
+                                .or_else(|_| overlay.move_window_constrained(Position::TrayCenter));
                         }
                     }
                     _ => {
@@ -150,43 +161,41 @@ pub fn build_system_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
             .on_menu_event({
                 let toggle = toggle.clone();
                 let show_hide = show_hide.clone();
-                move |app, event| {
-                    match event.id().as_ref() {
-                        "toggle-autostart" => {
-                            let app_handle = app.clone();
-                            let toggle_clone = toggle.clone();
-                            tauri::async_runtime::spawn(async move {
-                                if let Ok(enabled) = crate::autostart::is_enabled(&app_handle) {
-                                    let _ = crate::autostart::set_enabled(&app_handle, !enabled);
-                                    let _ = toggle_clone.set_checked(!enabled);
-                                    let _ = app_handle.emit("autostart-changed", !enabled);
-                                }
-                            });
-                        }
-                        "toggle-window" => {
-                            let app_handle = app.clone();
-                            let show_hide_clone = show_hide.clone();
-                            tauri::async_runtime::spawn(async move {
-                                if let Some(window) = app_handle.get_webview_window("main") {
-                                    if let Ok(visible) = window.is_visible() {
-                                        if visible {
-                                            let _ = window.minimize();
-                                            let _ = show_hide_clone.set_text("Show");
-                                        } else {
-                                            let _ = window.unminimize();
-                                            let _ = window.show();
-                                            let _ = window.set_focus();
-                                            let _ = show_hide_clone.set_text("Hide");
-                                        }
+                move |app, event| match event.id().as_ref() {
+                    "toggle-autostart" => {
+                        let app_handle = app.clone();
+                        let toggle_clone = toggle.clone();
+                        tauri::async_runtime::spawn(async move {
+                            if let Ok(enabled) = crate::autostart::is_enabled(&app_handle) {
+                                let _ = crate::autostart::set_enabled(&app_handle, !enabled);
+                                let _ = toggle_clone.set_checked(!enabled);
+                                let _ = app_handle.emit("autostart-changed", !enabled);
+                            }
+                        });
+                    }
+                    "toggle-window" => {
+                        let app_handle = app.clone();
+                        let show_hide_clone = show_hide.clone();
+                        tauri::async_runtime::spawn(async move {
+                            if let Some(window) = app_handle.get_webview_window("main") {
+                                if let Ok(visible) = window.is_visible() {
+                                    if visible {
+                                        let _ = window.minimize();
+                                        let _ = show_hide_clone.set_text("Show");
+                                    } else {
+                                        let _ = window.unminimize();
+                                        let _ = window.show();
+                                        let _ = window.set_focus();
+                                        let _ = show_hide_clone.set_text("Hide");
                                     }
                                 }
-                            });
-                        }
-                        "quit" => {
-                            app.exit(0);
-                        }
-                        _ => {}
+                            }
+                        });
                     }
+                    "quit" => {
+                        app.exit(0);
+                    }
+                    _ => {}
                 }
             })
             .build(app)?
@@ -198,7 +207,11 @@ pub fn build_system_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
                 let show_hide = show_hide.clone();
                 let last_click = last_click.clone();
                 move |tray, event| match event {
-                    TrayIconEvent::Click { button, button_state, .. } => {
+                    TrayIconEvent::Click {
+                        button,
+                        button_state,
+                        ..
+                    } => {
                         if button_state != MouseButtonState::Up {
                             return;
                         }
@@ -216,20 +229,23 @@ pub fn build_system_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
                                     if visible {
                                         let _ = window.hide();
                                         let _ = show_hide.set_text("Show");
-                                        let _ = tray.set_tooltip(Some(String::from("timeman — hidden")));
+                                        let _ = tray
+                                            .set_tooltip(Some(String::from("Usage Meter — hidden")));
                                     } else {
                                         let _ = window.show();
                                         let _ = window.unminimize();
                                         let _ = window.set_focus();
                                         let _ = show_hide.set_text("Hide");
-                                        let _ = tray.set_tooltip(Some(String::from("timeman — visible")));
+                                        let _ = tray
+                                            .set_tooltip(Some(String::from("Usage Meter — visible")));
                                     }
                                 } else {
                                     let _ = window.show();
                                     let _ = window.unminimize();
                                     let _ = window.set_focus();
                                     let _ = show_hide.set_text("Hide");
-                                    let _ = tray.set_tooltip(Some(String::from("timeman — visible")));
+                                    let _ =
+                                        tray.set_tooltip(Some(String::from("Usage Meter — visible")));
                                 }
                             }
                         }
@@ -240,43 +256,41 @@ pub fn build_system_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
             .on_menu_event({
                 let toggle = toggle.clone();
                 let show_hide = show_hide.clone();
-                move |app, event| {
-                    match event.id().as_ref() {
-                        "toggle-autostart" => {
-                            let app_handle = app.clone();
-                            let toggle_clone = toggle.clone();
-                            tauri::async_runtime::spawn(async move {
-                                if let Ok(enabled) = crate::autostart::is_enabled(&app_handle) {
-                                    let _ = crate::autostart::set_enabled(&app_handle, !enabled);
-                                    let _ = toggle_clone.set_checked(!enabled);
-                                    let _ = app_handle.emit("autostart-changed", !enabled);
-                                }
-                            });
-                        }
-                        "toggle-window" => {
-                            let app_handle = app.clone();
-                            let show_hide_clone = show_hide.clone();
-                            tauri::async_runtime::spawn(async move {
-                                if let Some(window) = app_handle.get_webview_window("main") {
-                                    if let Ok(visible) = window.is_visible() {
-                                        if visible {
-                                            let _ = window.minimize();
-                                            let _ = show_hide_clone.set_text("Show");
-                                        } else {
-                                            let _ = window.unminimize();
-                                            let _ = window.show();
-                                            let _ = window.set_focus();
-                                            let _ = show_hide_clone.set_text("Hide");
-                                        }
+                move |app, event| match event.id().as_ref() {
+                    "toggle-autostart" => {
+                        let app_handle = app.clone();
+                        let toggle_clone = toggle.clone();
+                        tauri::async_runtime::spawn(async move {
+                            if let Ok(enabled) = crate::autostart::is_enabled(&app_handle) {
+                                let _ = crate::autostart::set_enabled(&app_handle, !enabled);
+                                let _ = toggle_clone.set_checked(!enabled);
+                                let _ = app_handle.emit("autostart-changed", !enabled);
+                            }
+                        });
+                    }
+                    "toggle-window" => {
+                        let app_handle = app.clone();
+                        let show_hide_clone = show_hide.clone();
+                        tauri::async_runtime::spawn(async move {
+                            if let Some(window) = app_handle.get_webview_window("main") {
+                                if let Ok(visible) = window.is_visible() {
+                                    if visible {
+                                        let _ = window.minimize();
+                                        let _ = show_hide_clone.set_text("Show");
+                                    } else {
+                                        let _ = window.unminimize();
+                                        let _ = window.show();
+                                        let _ = window.set_focus();
+                                        let _ = show_hide_clone.set_text("Hide");
                                     }
                                 }
-                            });
-                        }
-                        "quit" => {
-                            app.exit(0);
-                        }
-                        _ => {}
+                            }
+                        });
                     }
+                    "quit" => {
+                        app.exit(0);
+                    }
+                    _ => {}
                 }
             })
             .build(app)?
@@ -288,15 +302,15 @@ pub fn build_system_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
     if let Some(window) = app.get_webview_window("main") {
         if let Ok(visible) = window.is_visible() {
             let _ = tray.set_tooltip::<String>(Some(String::from(if visible {
-                "timeman — visible"
+                "Usage Meter — visible"
             } else {
-                "timeman — hidden"
+                "Usage Meter — hidden"
             })));
         } else {
-            let _ = tray.set_tooltip::<String>(Some(String::from("timeman")));
+            let _ = tray.set_tooltip::<String>(Some(String::from("Usage Meter")));
         }
     } else {
-        let _ = tray.set_tooltip::<String>(Some(String::from("timeman")));
+        let _ = tray.set_tooltip::<String>(Some(String::from("Usage Meter")));
     }
 
     // ── Spawn metrics polling thread ─────────────────────────────────
@@ -311,8 +325,13 @@ pub fn build_system_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
             std::thread::sleep(<sysinfo::System as SystemExt>::MINIMUM_CPU_UPDATE_INTERVAL);
 
             // Initial totals for network delta calculation
-            let mut prev_total_rx: u64 = sys.networks().iter().map(|(_, d)| d.total_received()).sum();
-            let mut prev_total_tx: u64 = sys.networks().iter().map(|(_, d)| d.total_transmitted()).sum();
+            let mut prev_total_rx: u64 =
+                sys.networks().iter().map(|(_, d)| d.total_received()).sum();
+            let mut prev_total_tx: u64 = sys
+                .networks()
+                .iter()
+                .map(|(_, d)| d.total_transmitted())
+                .sum();
 
             loop {
                 let tick_start = Instant::now();
@@ -334,7 +353,11 @@ pub fn build_system_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
 
                 // Network totals & delta -> KB/s
                 let total_rx: u64 = sys.networks().iter().map(|(_, d)| d.total_received()).sum();
-                let total_tx: u64 = sys.networks().iter().map(|(_, d)| d.total_transmitted()).sum();
+                let total_tx: u64 = sys
+                    .networks()
+                    .iter()
+                    .map(|(_, d)| d.total_transmitted())
+                    .sum();
 
                 let elapsed = tick_start.elapsed().as_secs_f64().max(1e-6);
                 let rx_kbps = (total_rx.saturating_sub(prev_total_rx) as f64 / elapsed) / 1024.0;
@@ -351,7 +374,10 @@ pub fn build_system_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
                 let _ = tray.set_tooltip::<String>(Some(tooltip.clone()));
 
                 #[cfg(target_os = "linux")]
-                let _ = tray.set_title::<String>(Some(format!("{:.0}% • ↓{:.0}KB/s ↑{:.0}KB/s", cpu_percent, rx_kbps, tx_kbps)));
+                let _ = tray.set_title::<String>(Some(format!(
+                    "{:.0}% • ↓{:.0}KB/s ↑{:.0}KB/s",
+                    cpu_percent, rx_kbps, tx_kbps
+                )));
 
                 let payload = json!({
                     "cpu": (cpu_percent * 10.0).round() / 10.0,
