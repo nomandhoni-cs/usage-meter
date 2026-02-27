@@ -1,29 +1,32 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <title>Overlay</title>
-    <link rel="stylesheet" href="/src/overlay.css" />
-  </head>
-  <body>
-    <div id="overlay-root"></div>
-    <script type="module" src="/src/overlay.entry.tsx"></script>
-    <script>
-      // Ensure the SQL table exists by loading the plugin and executing a
-      // CREATE TABLE IF NOT EXISTS statement. This keeps schema management
-      // simple and runs on first overlay load.
-      import('@tauri-apps/plugin-sql').then(async (mod) => {
-        const Database = mod.default;
-        try {
-          const db = await Database.load('sqlite:usage_meter.sqlite');
-          await db.execute('CREATE TABLE IF NOT EXISTS overlay_positions (key TEXT PRIMARY KEY, x REAL, y REAL)');
-          await db.close();
-        } catch (e) {
-          // ignore errors; overlay still functions without persistence
-          console.warn('sql init failed', e);
-        }
-      }).catch(()=>{});
-    </script>
-  </body>
-  </html>
+
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Usage Meter Overlay</title>
+  <link rel="stylesheet" href="/src/overlay.css" />
+</head>
+
+<body>
+  <div id="overlay-root"></div>
+  <script type="module" src="/src/overlay.entry.tsx"></script>
+  <script>
+    // Ensure the SQL table exists by loading the plugin and executing a
+    // CREATE TABLE IF NOT EXISTS statement. This keeps schema management
+    // simple and runs on first overlay load.
+    import('@tauri-apps/plugin-sql').then(async (mod) => {
+      const Database = mod.default;
+      try {
+        const db = await Database.load('sqlite:usage_meter.sqlite');
+        await db.execute('CREATE TABLE IF NOT EXISTS overlay_positions (key TEXT PRIMARY KEY, x REAL, y REAL)');
+        await db.close();
+      } catch (e) {
+        // ignore errors; overlay still functions without persistence
+        console.warn('sql init failed', e);
+      }
+    }).catch(() => { });
+  </script>
+</body>
+
+</html>

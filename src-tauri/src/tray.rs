@@ -1,15 +1,15 @@
+use crate::network_commands::NetworkLoggerState;
 use serde_json::json;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
-use sysinfo::{CpuExt, NetworkExt, NetworksExt, System, SystemExt};
+use sysinfo::{Networks, System};
 use tauri::image::Image as TauriImage;
 use tauri::menu::{CheckMenuItemBuilder, MenuBuilder, MenuItemBuilder};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::Emitter;
 use tauri::Manager;
-use tauri_plugin_positioner::{Position, WindowExt};
 
 // Build the system tray and register event handlers.
 //
@@ -88,12 +88,6 @@ pub fn build_system_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
                         button_state,
                         ..
                     } => {
-                        // Let the positioner plugin observe tray click events
-                        // only — do not forward hover/move events that cause the
-                        // overlay to reposition when the user merely moves the
-                        // mouse over the tray icon.
-                        let _ = tauri_plugin_positioner::on_tray_event(tray.app_handle(), &event);
-
                         // Only handle mouse-up to match standard expectations.
                         if button_state != MouseButtonState::Up {
                             return;
@@ -115,37 +109,21 @@ pub fn build_system_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
                                     if visible {
                                         let _ = window.hide();
                                         let _ = show_hide.set_text("Show");
-                                        let _ = tray
-                                            .set_tooltip(Some(String::from("Usage Meter — hidden")));
                                     } else {
                                         let _ = window.show();
                                         let _ = window.unminimize();
                                         let _ = window.set_focus();
                                         let _ = show_hide.set_text("Hide");
-                                        let _ = tray
-                                            .set_tooltip(Some(String::from("Usage Meter — visible")));
                                     }
                                 } else {
                                     let _ = window.show();
                                     let _ = window.unminimize();
                                     let _ = window.set_focus();
                                     let _ = show_hide.set_text("Hide");
-                                    let _ =
-                                        tray.set_tooltip(Some(String::from("Usage Meter — visible")));
                                 }
                             }
                         } else if button == MouseButton::Right {
                             // Let the system open the context menu on right click.
-                        }
-
-                        // Only reposition the overlay on explicit clicks — not
-                        // on hover/move. A click indicates user intent to focus
-                        // the app.
-                        let app = tray.app_handle();
-                        if let Some(overlay) = app.get_webview_window("overlay") {
-                            let _ = overlay
-                                .move_window_constrained(Position::TrayBottomCenter)
-                                .or_else(|_| overlay.move_window_constrained(Position::TrayCenter));
                         }
                     }
                     _ => {
@@ -229,23 +207,17 @@ pub fn build_system_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
                                     if visible {
                                         let _ = window.hide();
                                         let _ = show_hide.set_text("Show");
-                                        let _ = tray
-                                            .set_tooltip(Some(String::from("Usage Meter — hidden")));
                                     } else {
                                         let _ = window.show();
                                         let _ = window.unminimize();
                                         let _ = window.set_focus();
                                         let _ = show_hide.set_text("Hide");
-                                        let _ = tray
-                                            .set_tooltip(Some(String::from("Usage Meter — visible")));
                                     }
                                 } else {
                                     let _ = window.show();
                                     let _ = window.unminimize();
                                     let _ = window.set_focus();
                                     let _ = show_hide.set_text("Hide");
-                                    let _ =
-                                        tray.set_tooltip(Some(String::from("Usage Meter — visible")));
                                 }
                             }
                         }
@@ -296,53 +268,65 @@ pub fn build_system_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
             .build(app)?
     };
 
-    // Set an initial tooltip so hovering the tray icon shows helpful text on
-    // platforms that support it. Use an explicit generic to avoid type
-    // inference issues across dependency crates.
-    if let Some(window) = app.get_webview_window("main") {
-        if let Ok(visible) = window.is_visible() {
-            let _ = tray.set_tooltip::<String>(Some(String::from(if visible {
-                "Usage Meter — visible"
-            } else {
-                "Usage Meter — hidden"
-            })));
-        } else {
-            let _ = tray.set_tooltip::<String>(Some(String::from("Usage Meter")));
-        }
-    } else {
-        let _ = tray.set_tooltip::<String>(Some(String::from("Usage Meter")));
+    // Set an initial tooltip (simple app name only)
+    let _ = tray.set_tooltip::<String>(Some(String::from("Usage Meter")));
+
+    // ── Spawn overlay watchdog thread (Windows only) ─────────────────
+    #[cfg(target_os = "windows")]
+    {
+        let app_handle = app.clone();
+        thread::spawn(move || {
+            loop {
+                std::thread::sleep(Duration::from_millis(500));
+
+                if let Some(overlay) = app_handle.get_webview_window("overlay") {
+                    // Ensure overlay is always visible and on top
+                    if let Ok(visible) = overlay.is_visible() {
+                        if !visible {
+                            let _ = overlay.show();
+                        }
+                    }
+                    let _ = overlay.set_always_on_top(true);
+                }
+            }
+        });
     }
 
     // ── Spawn metrics polling thread ─────────────────────────────────
     {
-        let tray = tray.clone();
         let app_handle = app.clone();
+        let logger_state = app.state::<NetworkLoggerState>();
+        let logger_clone = logger_state.logger.clone();
 
         thread::spawn(move || {
             // Keep a single System instance for diffs
             let mut sys = System::new_all();
             sys.refresh_all();
-            std::thread::sleep(<sysinfo::System as SystemExt>::MINIMUM_CPU_UPDATE_INTERVAL);
+            std::thread::sleep(sysinfo::MINIMUM_CPU_UPDATE_INTERVAL);
+
+            // Networks are now separate from System
+            let mut networks = Networks::new_with_refreshed_list();
 
             // Initial totals for network delta calculation
-            let mut prev_total_rx: u64 =
-                sys.networks().iter().map(|(_, d)| d.total_received()).sum();
-            let mut prev_total_tx: u64 = sys
-                .networks()
-                .iter()
-                .map(|(_, d)| d.total_transmitted())
-                .sum();
+            let mut prev_total_rx: u64 = networks.iter().map(|(_, d)| d.total_received()).sum();
+            let mut prev_total_tx: u64 = networks.iter().map(|(_, d)| d.total_transmitted()).sum();
+
+            // Track accumulated bytes for logging (log every minute)
+            let mut accumulated_rx: i64 = 0;
+            let mut accumulated_tx: i64 = 0;
+            let mut last_log_time = Instant::now();
+            let log_interval = Duration::from_secs(60); // Log every minute
 
             loop {
                 let tick_start = Instant::now();
 
                 // Refresh required subsystems
-                sys.refresh_cpu();
+                sys.refresh_cpu_all();
                 sys.refresh_memory();
-                sys.refresh_networks();
+                networks.refresh(true);
 
                 // CPU %
-                let cpu_percent = sys.global_cpu_info().cpu_usage() as f64;
+                let cpu_percent = sys.global_cpu_usage() as f64;
 
                 // Memory %
                 let mem_pct = if sys.total_memory() > 0 {
@@ -352,33 +336,42 @@ pub fn build_system_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
                 };
 
                 // Network totals & delta -> KB/s
-                let total_rx: u64 = sys.networks().iter().map(|(_, d)| d.total_received()).sum();
-                let total_tx: u64 = sys
-                    .networks()
-                    .iter()
-                    .map(|(_, d)| d.total_transmitted())
-                    .sum();
+                let total_rx: u64 = networks.iter().map(|(_, d)| d.total_received()).sum();
+                let total_tx: u64 = networks.iter().map(|(_, d)| d.total_transmitted()).sum();
 
                 let elapsed = tick_start.elapsed().as_secs_f64().max(1e-6);
-                let rx_kbps = (total_rx.saturating_sub(prev_total_rx) as f64 / elapsed) / 1024.0;
-                let tx_kbps = (total_tx.saturating_sub(prev_total_tx) as f64 / elapsed) / 1024.0;
+                let delta_rx = total_rx.saturating_sub(prev_total_rx);
+                let delta_tx = total_tx.saturating_sub(prev_total_tx);
+
+                let rx_kbps = (delta_rx as f64 / elapsed) / 1024.0;
+                let tx_kbps = (delta_tx as f64 / elapsed) / 1024.0;
+
+                // Accumulate bytes for logging
+                accumulated_rx += delta_rx as i64;
+                accumulated_tx += delta_tx as i64;
 
                 prev_total_rx = total_rx;
                 prev_total_tx = total_tx;
 
-                let tooltip = format!(
-                    "CPU: {:.0}%  MEM: {:.0}%\n↓ {:.1} KB/s   ↑ {:.1} KB/s",
-                    cpu_percent, mem_pct, rx_kbps, tx_kbps
-                );
+                // Log to database every minute
+                if last_log_time.elapsed() >= log_interval {
+                    let logger = logger_clone.clone();
+                    let rx_to_log = accumulated_rx;
+                    let tx_to_log = accumulated_tx;
 
-                let _ = tray.set_tooltip::<String>(Some(tooltip.clone()));
+                    tauri::async_runtime::spawn(async move {
+                        let guard = logger.lock().await;
+                        if let Some(logger) = guard.as_ref() {
+                            let _ = logger.log_usage(tx_to_log, rx_to_log).await;
+                        }
+                    });
 
-                #[cfg(target_os = "linux")]
-                let _ = tray.set_title::<String>(Some(format!(
-                    "{:.0}% • ↓{:.0}KB/s ↑{:.0}KB/s",
-                    cpu_percent, rx_kbps, tx_kbps
-                )));
+                    accumulated_rx = 0;
+                    accumulated_tx = 0;
+                    last_log_time = Instant::now();
+                }
 
+                // Emit metrics to overlay window
                 let payload = json!({
                     "cpu": (cpu_percent * 10.0).round() / 10.0,
                     "memory_pct": (mem_pct * 10.0).round() / 10.0,

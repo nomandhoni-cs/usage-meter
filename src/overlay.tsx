@@ -32,28 +32,6 @@ export default function Overlay() {
         const p = e.payload as Metrics;
         setMetrics(p);
       }).then((fn) => (unlisten = fn));
-
-      // Restore saved position from backend via invoke (command will be
-      // and the plugin will be used to load the saved position.
-      import('@tauri-apps/plugin-sql').then(async (mod) => {
-        const Database = mod.default;
-        try {
-          const db = await Database.load('sqlite:usage_meter.sqlite');
-          const rows: any[] = await db.select('SELECT x, y FROM overlay_positions WHERE key = $1', ['overlay']);
-          if (rows && rows.length > 0) {
-            const pos = rows[0];
-            if (typeof pos.x === 'number' && typeof pos.y === 'number') {
-              import('@tauri-apps/api/window').then(({ getCurrentWindow }) => {
-                const win = getCurrentWindow();
-                win.setPosition({ x: Math.round(pos.x), y: Math.round(pos.y) } as any).catch(() => {});
-              });
-            }
-          }
-          await db.close();
-        } catch (e) {
-          // ignore
-        }
-      }).catch(()=>{});
     }
 
     return () => {
@@ -111,10 +89,22 @@ export default function Overlay() {
               try {
                 const Database = (await import('@tauri-apps/plugin-sql')).default;
                 const db = await Database.load('sqlite:usage_meter.sqlite');
-                await db.execute('INSERT INTO overlay_positions (key, x, y) VALUES ($1, $2, $3) ON CONFLICT(key) DO UPDATE SET x=excluded.x, y=excluded.y', ['overlay', lastPosRef.current.x, lastPosRef.current.y]);
+
+                // Ensure table exists before inserting
+                await db.execute(
+                  'CREATE TABLE IF NOT EXISTS overlay_positions (key TEXT PRIMARY KEY, x REAL NOT NULL, y REAL NOT NULL)'
+                );
+
+                // Save position (use logical position)
+                await db.execute(
+                  'INSERT INTO overlay_positions (key, x, y) VALUES ($1, $2, $3) ON CONFLICT(key) DO UPDATE SET x=excluded.x, y=excluded.y',
+                  ['overlay', lastPosRef.current.x, lastPosRef.current.y]
+                );
+
                 await db.close();
+                console.log('Overlay position saved:', lastPosRef.current);
               } catch (err) {
-                // ignore persistence errors
+                console.error('Failed to save overlay position:', err);
               }
               setDragging(false);
               if (pollRef.current) {

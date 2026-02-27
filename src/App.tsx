@@ -1,17 +1,15 @@
 import { useState, useEffect } from "react";
-import reactLogo from "./assets/react.svg";
 import { invoke } from "@tauri-apps/api/core";
+import { check } from "@tauri-apps/plugin-updater";
+import { relaunch } from "@tauri-apps/plugin-process";
+import NetworkUsage from "./components/NetworkUsage";
 import "./App.css";
 
 function App() {
-  const [greetMsg, setGreetMsg] = useState("");
-  const [name, setName] = useState("");
   const [autostart, setAutostart] = useState<boolean | null>(null);
-
-  async function greet() {
-    // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-    setGreetMsg(await invoke("greet", { name }));
-  }
+  const [updateStatus, setUpdateStatus] = useState<string>("");
+  const [isChecking, setIsChecking] = useState(false);
+  const [isDownloading, setIsDownloading] = useState(false);
 
   useEffect(() => {
     // query current autostart value from backend
@@ -20,13 +18,8 @@ function App() {
       .catch(() => setAutostart(null));
 
     // subscribe to autostart change events emitted from Rust so the UI stays
-    // in sync if the user toggles autostart via the tray menu. We listen for
-    // `autostart-changed` events and update local state. If the event system
-    // isn't used, this listener is effectively a no-op.
+    // in sync if the user toggles autostart via the tray menu
     let unlisten: (() => Promise<void>) | null = null;
-    // Use dynamic import so bundlers don't include the event module for
-    // non-Tauri builds. If the import fails (not running inside Tauri), we
-    // silently ignore it.
     import("@tauri-apps/api/event")
       .then((event) => {
         const handler = (e: any) => setAutostart(Boolean(e.payload));
@@ -49,48 +42,84 @@ function App() {
     setAutostart(!autostart);
   }
 
+  async function checkForUpdates() {
+    setIsChecking(true);
+    setUpdateStatus("Checking for updates...");
+
+    try {
+      const update = await check();
+
+      if (update?.available) {
+        setUpdateStatus(`Update available: ${update.version}`);
+        setIsDownloading(true);
+
+        await update.downloadAndInstall((event) => {
+          switch (event.event) {
+            case "Started":
+              setUpdateStatus(`Downloading update (${event.data.contentLength} bytes)...`);
+              break;
+            case "Progress":
+              setUpdateStatus(`Downloaded ${event.data.chunkLength} bytes`);
+              break;
+            case "Finished":
+              setUpdateStatus("Download complete! Restarting...");
+              break;
+          }
+        });
+
+        await relaunch();
+      } else {
+        setUpdateStatus("You're on the latest version!");
+      }
+    } catch (error) {
+      setUpdateStatus(`Update check failed: ${error}`);
+    } finally {
+      setIsChecking(false);
+      setIsDownloading(false);
+    }
+  }
+
   return (
     <main className="container">
-      <h1>Welcome to Tauri + React</h1>
+      <h1>Usage Meter</h1>
+      <p className="subtitle">System monitoring overlay</p>
 
-      <div className="row">
-        <a href="https://vite.dev" target="_blank">
-          <img src="/vite.svg" className="logo vite" alt="Vite logo" />
-        </a>
-        <a href="https://tauri.app" target="_blank">
-          <img src="/tauri.svg" className="logo tauri" alt="Tauri logo" />
-        </a>
-        <a href="https://react.dev" target="_blank">
-          <img src={reactLogo} className="logo react" alt="React logo" />
-        </a>
-      </div>
-      <p>Click on the Tauri, Vite, and React logos to learn more.</p>
+      <section className="settings-section">
+        <h2>Settings</h2>
 
-      <form
-        className="row"
-        onSubmit={(e) => {
-          e.preventDefault();
-          greet();
-        }}
-      >
-        <input
-          id="greet-input"
-          onChange={(e) => setName(e.currentTarget.value)}
-          placeholder="Enter a name..."
-        />
-        <button type="submit">Greet</button>
-      </form>
-      <p>{greetMsg}</p>
+        <div className="setting-item">
+          <div className="setting-info">
+            <h3>Autostart</h3>
+            <p>Launch Usage Meter when you log in</p>
+            <p className="status">
+              Status: {autostart === null ? "unknown" : autostart ? "enabled" : "disabled"}
+            </p>
+          </div>
+          <button onClick={toggleAutostart} disabled={autostart === null}>
+            {autostart ? "Disable" : "Enable"}
+          </button>
+        </div>
 
-      <section style={{ marginTop: 20 }}>
-        <h2>Autostart</h2>
-        <p>
-          Auto startup is: {autostart === null ? "unknown" : autostart ? "enabled" : "disabled"}
-        </p>
-        <button onClick={toggleAutostart} disabled={autostart === null}>
-          {autostart ? "Disable Autostart" : "Enable Autostart"}
-        </button>
+        <div className="setting-item">
+          <div className="setting-info">
+            <h3>Updates</h3>
+            <p>Check for new versions of Usage Meter</p>
+            {updateStatus && <p className="status">{updateStatus}</p>}
+          </div>
+          <button
+            onClick={checkForUpdates}
+            disabled={isChecking || isDownloading}
+          >
+            {isChecking ? "Checking..." : isDownloading ? "Downloading..." : "Check for Updates"}
+          </button>
+        </div>
       </section>
+
+      <NetworkUsage />
+
+      <footer>
+        <p>The overlay window runs in the background. Check your system tray for options.</p>
+      </footer>
     </main>
   );
 }
