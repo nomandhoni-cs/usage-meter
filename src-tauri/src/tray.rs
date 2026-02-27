@@ -6,6 +6,9 @@ use tauri::Manager;
 use tauri::Emitter;
 use std::sync::{Arc, Mutex};
 use std::time::{Instant, Duration};
+use sysinfo::{System, SystemExt, NetworkExt, NetworksExt, CpuExt};
+use serde_json::json;
+use std::thread;
 
 // Build the system tray and register event handlers.
 //
@@ -272,6 +275,73 @@ pub fn build_system_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
         }
     } else {
         let _ = tray.set_tooltip::<String>(Some(String::from("timeman")));
+    }
+
+    // ── Spawn metrics polling thread ─────────────────────────────────
+    {
+        let tray = tray.clone();
+        let app_handle = app.clone();
+
+        thread::spawn(move || {
+            // Keep a single System instance for diffs
+            let mut sys = System::new_all();
+            sys.refresh_all();
+            std::thread::sleep(<sysinfo::System as SystemExt>::MINIMUM_CPU_UPDATE_INTERVAL);
+
+            // Initial totals for network delta calculation
+            let mut prev_total_rx: u64 = sys.networks().iter().map(|(_, d)| d.total_received()).sum();
+            let mut prev_total_tx: u64 = sys.networks().iter().map(|(_, d)| d.total_transmitted()).sum();
+
+            loop {
+                let tick_start = Instant::now();
+
+                // Refresh required subsystems
+                sys.refresh_cpu();
+                sys.refresh_memory();
+                sys.refresh_networks();
+
+                // CPU %
+                let cpu_percent = sys.global_cpu_info().cpu_usage() as f64;
+
+                // Memory %
+                let mem_pct = if sys.total_memory() > 0 {
+                    sys.used_memory() as f64 / sys.total_memory() as f64 * 100.0
+                } else {
+                    0.0
+                };
+
+                // Network totals & delta -> KB/s
+                let total_rx: u64 = sys.networks().iter().map(|(_, d)| d.total_received()).sum();
+                let total_tx: u64 = sys.networks().iter().map(|(_, d)| d.total_transmitted()).sum();
+
+                let elapsed = tick_start.elapsed().as_secs_f64().max(1e-6);
+                let rx_kbps = (total_rx.saturating_sub(prev_total_rx) as f64 / elapsed) / 1024.0;
+                let tx_kbps = (total_tx.saturating_sub(prev_total_tx) as f64 / elapsed) / 1024.0;
+
+                prev_total_rx = total_rx;
+                prev_total_tx = total_tx;
+
+                let tooltip = format!(
+                    "CPU: {:.0}%  MEM: {:.0}%\n↓ {:.1} KB/s   ↑ {:.1} KB/s",
+                    cpu_percent, mem_pct, rx_kbps, tx_kbps
+                );
+
+                let _ = tray.set_tooltip::<String>(Some(tooltip.clone()));
+
+                #[cfg(target_os = "linux")]
+                let _ = tray.set_title::<String>(Some(format!("{:.0}% • ↓{:.0}KB/s ↑{:.0}KB/s", cpu_percent, rx_kbps, tx_kbps)));
+
+                let payload = json!({
+                    "cpu": (cpu_percent * 10.0).round() / 10.0,
+                    "memory_pct": (mem_pct * 10.0).round() / 10.0,
+                    "rx_kbps": (rx_kbps * 10.0).round() / 10.0,
+                    "tx_kbps": (tx_kbps * 10.0).round() / 10.0,
+                });
+                let _ = app_handle.emit("metrics-updated", payload);
+
+                std::thread::sleep(Duration::from_secs(1));
+            }
+        });
     }
 
     Ok(())

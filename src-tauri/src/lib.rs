@@ -2,6 +2,9 @@ mod autostart;
 mod tray;
 
 use tauri::Manager;
+use serde_json::json;
+use sysinfo::{System, SystemExt, NetworksExt, NetworkExt, CpuExt};
+use tauri::{WindowBuilder, WindowUrl, LogicalSize};
 
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 #[tauri::command]
@@ -24,6 +27,45 @@ fn set_autostart_enabled(app: tauri::AppHandle, enabled: bool) -> tauri::Result<
 #[tauri::command]
 fn enable_autostart(app: tauri::AppHandle) -> tauri::Result<()> {
     autostart::enable_autostart(&app)
+}
+
+#[tauri::command]
+fn get_system_metrics() -> tauri::Result<serde_json::Value> {
+    // Single-shot metrics snapshot. CPU measurements require two refreshes
+    // separated by MINIMUM_CPU_UPDATE_INTERVAL to produce meaningful values.
+    let mut sys = System::new_all();
+    sys.refresh_all();
+    std::thread::sleep(<sysinfo::System as SystemExt>::MINIMUM_CPU_UPDATE_INTERVAL);
+
+    sys.refresh_cpu();
+    sys.refresh_memory();
+    sys.refresh_networks();
+
+    let cpu = sys.global_cpu_info().cpu_usage() as f64;
+    let memory_pct = if sys.total_memory() > 0 {
+        sys.used_memory() as f64 / sys.total_memory() as f64 * 100.0
+    } else {
+        0.0
+    };
+
+    // Use per-refresh deltas for network (received()/transmitted()) and
+    // divide by elapsed interval used above.
+    let rx_bytes: u64 = sys.networks().iter().map(|(_, d)| d.received()).sum();
+    let tx_bytes: u64 = sys.networks().iter().map(|(_, d)| d.transmitted()).sum();
+    let elapsed = <sysinfo::System as SystemExt>::MINIMUM_CPU_UPDATE_INTERVAL.as_secs_f64().max(1e-6);
+    let rx_kbps = (rx_bytes as f64 / elapsed) / 1024.0;
+    let tx_kbps = (tx_bytes as f64 / elapsed) / 1024.0;
+
+    let round1 = |v: f64| (v * 10.0).round() / 10.0;
+
+    let payload = json!({
+        "cpu": round1(cpu),
+        "memory_pct": round1(memory_pct),
+        "rx_kbps": round1(rx_kbps),
+        "tx_kbps": round1(tx_kbps),
+    });
+
+    Ok(payload)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -55,6 +97,43 @@ pub fn run() {
                 let _ = window.hide();
             }
 
+            // On Windows create a small borderless overlay window that will be
+            // used to display live metrics next to the taskbar. We create the
+            // window programmatically so we can control decorations and
+            // taskbar-skipping. Use a separate thread to avoid potential
+            // WebView2 deadlocks when creating additional webviews during
+            // startup.
+            #[cfg(target_os = "windows")]
+            {
+                let app_handle = handle.clone();
+                std::thread::spawn(move || {
+                    // Size tuned for a compact two-line overlay. Adjust as
+                    // desired.
+                    let overlay_w = 240.0;
+                    let overlay_h = 44.0;
+
+                    // Load the bundled app entry but append a hash so the
+                    // frontend can detect this is the overlay window and
+                    // render a compact UI (`index.html#overlay`). Using
+                    // `WindowUrl::App` makes this work in both dev and prod.
+                    let url = WindowUrl::App("index.html#overlay".into());
+
+                    // Build the window with minimal chrome and always-on-top.
+                    // We don't attempt complex multi-monitor docking here; the
+                    // frontend can request positioning or we can extend this
+                    // logic later to compute the work area.
+                    let _ = WindowBuilder::new(&app_handle, "overlay", url)
+                        .title("timeman-overlay")
+                        .inner_size(LogicalSize::new(overlay_w, overlay_h))
+                        .decorations(false)
+                        .skip_taskbar(true)
+                        .always_on_top(true)
+                        .transparent(true)
+                        .visible(true)
+                        .build();
+                });
+            }
+
             // Ensure the toggle-autostart menu item starts with the correct
             // checked state. Query the plugin and set the menu checkbox.
             let handle_clone = handle.clone();
@@ -81,8 +160,9 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             greet,
             is_autostart_enabled,
-            set_autostart_enabled
-            ,enable_autostart
+            set_autostart_enabled,
+            enable_autostart,
+            get_system_metrics
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

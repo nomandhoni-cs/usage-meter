@@ -1,0 +1,45 @@
+:root {
+  --bg: rgba(12,12,12,0.75);
+  --fg: #fff;
+  --accent: #24c8db;
+  font-family: Inter, Avenir, Helvetica, Arial, sans-serif;
+}
+
+body {
+  margin: 0;
+  padding: 6px 8px;
+  background: var(--bg);
+  color: var(--fg);
+  -webkit-user-select: none;
+  -ms-user-select: none;
+  user-select: none;
+}
+
+.wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+}
+
+.top {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+}
+
+.big {
+  font-weight: 700;
+  font-size: 14px;
+}
+
+.small {
+  opacity: 0.85;
+  font-size: 11px;
+}
+
+.net {
+  display: flex;
+  gap: 10px;
+  color: var(--accent);
+}

@@ -21,6 +21,8 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = ["tray-icon", "image-png", "image-ico"] }
 tauri-plugin-autostart = "2"
 anyhow = "1"
+sysinfo = "0.29"
+serde_json = "1.0"
 
 [package.metadata.tauri]
 # Ensure opener is not auto-included in generated permissions; we removed the
