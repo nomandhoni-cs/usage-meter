@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use tauri::image::Image as TauriImage;
 use tauri::Manager;
 use tauri::Emitter;
+use tauri_plugin_positioner::{Position, WindowExt};
 use std::sync::{Arc, Mutex};
 use std::time::{Instant, Duration};
 use sysinfo::{System, SystemExt, NetworkExt, NetworksExt, CpuExt};
@@ -81,6 +82,12 @@ pub fn build_system_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
                 let last_click = last_click.clone();
                 move |tray, event| match event {
                     TrayIconEvent::Click { button, button_state, .. } => {
+                        // Let the positioner plugin observe tray click events
+                        // only — do not forward hover/move events that cause the
+                        // overlay to reposition when the user merely moves the
+                        // mouse over the tray icon.
+                        let _ = tauri_plugin_positioner::on_tray_event(tray.app_handle(), &event);
+
                         // Only handle mouse-up to match standard expectations.
                         if button_state != MouseButtonState::Up {
                             return;
@@ -121,8 +128,23 @@ pub fn build_system_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
                         } else if button == MouseButton::Right {
                             // Let the system open the context menu on right click.
                         }
+
+                        // Only reposition the overlay on explicit clicks — not
+                        // on hover/move. A click indicates user intent to focus
+                        // the app.
+                        let app = tray.app_handle();
+                        if let Some(overlay) = app.get_webview_window("overlay") {
+                            let _ = overlay.move_window_constrained(Position::TrayBottomCenter).or_else(|_| overlay.move_window_constrained(Position::TrayCenter));
+                        }
                     }
-                    _ => {}
+                    _ => {
+                        // For all non-click events (hover/move/enter/leave) do
+                        // not forward to the positioner plugin to avoid the
+                        // overlay following the mouse. This keeps the overlay
+                        // stationary unless the user explicitly clicks the
+                        // tray icon.
+                        // NO-OP
+                    }
                 }
             })
             .on_menu_event({
