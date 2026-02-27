@@ -1,4 +1,7 @@
-use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
+use tauri::Manager;
+
+#[cfg(target_os = "windows")]
+use tauri::{WebviewUrl, WebviewWindowBuilder};
 
 /// Initialize and create the overlay window on Windows
 #[cfg(target_os = "windows")]
@@ -53,6 +56,7 @@ pub fn create_overlay_window(_app: &tauri::AppHandle) -> tauri::Result<()> {
 }
 
 /// Load saved overlay position from SQLite database
+#[cfg(target_os = "windows")]
 fn load_saved_position(app: &tauri::AppHandle) -> Option<(f64, f64)> {
     let app_dir = app.path().app_data_dir().ok()?;
     let db_path = app_dir.join("usage_meter.sqlite");
@@ -94,6 +98,7 @@ fn load_saved_position(app: &tauri::AppHandle) -> Option<(f64, f64)> {
 }
 
 /// Calculate default overlay position based on monitor and taskbar location
+#[cfg(target_os = "windows")]
 fn calculate_default_position(
     app: &tauri::AppHandle,
     overlay_w: f64,
